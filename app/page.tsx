@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import {
   AuthorityType,
   MINT_SIZE,
@@ -12,7 +13,6 @@ import {
   getAssociatedTokenAddress,
 } from "@solana/spl-token";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import {
   createCreateMetadataAccountV3Instruction,
   PROGRAM_ID as TOKEN_METADATA_PROGRAM_ID,
@@ -45,6 +45,14 @@ type FormErrors = {
   description?: string;
   image?: string;
 };
+
+const WalletMultiButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then(
+      (module) => module.WalletMultiButton,
+    ),
+  { ssr: false },
+);
 
 const DEFAULT_FORM: LaunchForm = {
   name: "",
@@ -201,73 +209,40 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [isBalanceLoading, setIsBalanceLoading] = useState(false);
 
-  // Fetch wallet balance using onAccountChange for real-time updates
+  // Fetch wallet balance like the reference (polling)
   useEffect(() => {
     if (!publicKey || !connection) {
       setWalletBalance(null);
+      setIsBalanceLoading(false);
       return;
     }
 
-    let subscriptionId: number | null = null;
     let isMounted = true;
 
-    // Function to update balance
     const updateBalance = async () => {
+      setIsBalanceLoading(true);
       try {
-        // Use getAccountInfo as primary method (more reliable)
-        const accountInfo = await connection.getAccountInfo(publicKey);
+        const balance = await connection.getBalance(publicKey);
         if (isMounted) {
-          if (accountInfo) {
-            setWalletBalance(accountInfo.lamports / LAMPORTS_PER_SOL);
-          } else {
-            // Account exists but might have 0 balance, try getBalance
-            const balance = await connection.getBalance(publicKey);
-            setWalletBalance(balance / LAMPORTS_PER_SOL);
-          }
+          setWalletBalance(balance / LAMPORTS_PER_SOL);
         }
       } catch (err) {
         console.error("Failed to fetch balance:", err);
+      } finally {
         if (isMounted) {
-          // Fallback to getBalance
-          try {
-            const balance = await connection.getBalance(publicKey);
-            setWalletBalance(balance / LAMPORTS_PER_SOL);
-          } catch {
-            setWalletBalance(0);
-          }
+          setIsBalanceLoading(false);
         }
       }
     };
 
-    // Get initial balance immediately
     updateBalance();
+    const intervalId = setInterval(updateBalance, 20000);
 
-    // Subscribe to account changes for real-time updates
-    try {
-      subscriptionId = connection.onAccountChange(
-        publicKey,
-        (accountInfo) => {
-          if (isMounted) {
-            setWalletBalance(accountInfo.lamports / LAMPORTS_PER_SOL);
-          }
-        },
-        "confirmed",
-      );
-    } catch (err) {
-      console.error("Failed to subscribe to account changes:", err);
-    }
-
-    // Also poll every 5 seconds as backup
-    const intervalId = setInterval(updateBalance, 5000);
-
-    // Cleanup
     return () => {
       isMounted = false;
       clearInterval(intervalId);
-      if (subscriptionId !== null) {
-        connection.removeAccountChangeListener(subscriptionId).catch(() => {});
-      }
     };
   }, [publicKey, connection]);
 
@@ -275,10 +250,13 @@ export default function Home() {
   const refreshBalance = useCallback(async () => {
     if (!publicKey || !connection) return;
     try {
+      setIsBalanceLoading(true);
       const balance = await connection.getBalance(publicKey, "confirmed");
       setWalletBalance(balance / LAMPORTS_PER_SOL);
     } catch (err) {
       console.error("Failed to refresh balance:", err);
+    } finally {
+      setIsBalanceLoading(false);
     }
   }, [publicKey, connection]);
 
@@ -299,6 +277,13 @@ export default function Home() {
     if (!mintAddress) return "https://raydium.io/liquidity/create/cpmm-pool/";
     return `https://raydium.io/liquidity/create/cpmm-pool/?mint=${encodeURIComponent(mintAddress)}`;
   }, [mintAddress]);
+
+  const networkLabel = useMemo(() => {
+    const network = process.env.NEXT_PUBLIC_SOLANA_NETWORK;
+    if (network === "mainnet-beta") return "Mainnet";
+    if (network === "testnet") return "Testnet";
+    return "Devnet";
+  }, []);
 
   const updateForm = (field: keyof LaunchForm) => (value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -639,7 +624,15 @@ export default function Home() {
                   : "Loading..."}
               </div>
             )}
-            <WalletMultiButton className="!rounded-full !bg-purple-600 !px-4 !py-2 !text-sm !font-semibold !text-white hover:!bg-purple-700" />
+            <div className="flex flex-col items-end gap-2 text-right">
+              <WalletMultiButton />
+              {publicKey && (
+                <>
+                 
+                 
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>
